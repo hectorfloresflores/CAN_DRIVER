@@ -9,6 +9,12 @@
 #include "S32K144.h"           /* include peripheral declarations S32K144 */
 #include "clocks_and_modes.h"
 
+void WDOG_disable(void) {
+	WDOG->CNT = 0xD928C520; /* Unlock watchdog */
+	WDOG->TOVAL = 0x0000FFFF; /* Maximum timeout value */
+	WDOG->CS = 0x00002100; /* Disable watchdog */
+}
+
 void SOSC_init_8MHz(void) {
   SCG->SOSCDIV=0x00000101;  /* SOSCDIV1 & SOSCDIV2 =1: divide by 1 */
   SCG->SOSCCFG=0x00000024;  /* Range=2: Medium freq (SOSC betw 1MHz-8MHz)*/

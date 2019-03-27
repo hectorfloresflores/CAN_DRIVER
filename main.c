@@ -14,25 +14,6 @@
 #define DEVICE_1 1
 #define DEVICE_2 0
 
-void WDOG_disable(void) {
-	WDOG->CNT = 0xD928C520; /* Unlock watchdog */
-	WDOG->TOVAL = 0x0000FFFF; /* Maximum timeout value */
-	WDOG->CS = 0x00002100; /* Disable watchdog */
-}
-void PORT_init(void) {
-
-	PCC->PCCn[PCC_PORTE_INDEX] |= PCC_PCCn_CGC_MASK; /* Enable clock for PORTE */
-	PORTE->PCR[4] |= PORT_PCR_MUX(5); /* Port E4: MUX = ALT5, CAN0_RX */
-	PORTE->PCR[5] |= PORT_PCR_MUX(5); /* Port E5: MUX = ALT5, CAN0_TX */
-	PCC->PCCn[PCC_PORTD_INDEX] |= PCC_PCCn_CGC_MASK; /* Enable clock for PORTD */
-	PORTD->PCR[16] = 0x00000100; /* Port D16: MUX = GPIO (to green LED) */
-	PTD->PDDR |= 1 << 16; /* Port D16: Data direction = output */
-	PCC->PCCn[PCC_PORTB_INDEX] |= PCC_PCCn_CGC_MASK; /* Enable clock for PORTB */
-	PORTB->PCR[14] |= PORT_PCR_MUX(3); /* Port B14: MUX = ALT3, LPSPI1_SCK */
-	PORTB->PCR[15] |= PORT_PCR_MUX(3); /* Port B15: MUX = ALT3, LPSPI1_SIN */
-	PORTB->PCR[16] |= PORT_PCR_MUX(3); /* Port B16: MUX = ALT3, LPSPI1_SOUT */
-	PORTB->PCR[17] |= PORT_PCR_MUX(3); /* Port B17: MUX = ALT3, LPSPI1_PCS3 */
-}
 
 /**This program is able to test the CAN protocol making transmissions and receptions with other devices*/
 int main(void) {
@@ -44,7 +25,7 @@ int main(void) {
 	SPLL_init_160MHz(); /* Initialize SPLL to 160 MHz with 8 MHz SOSC */
 	NormalRUNmode_80MHz(); /* Init clocks: 80 MHz sysclk & core, 40 MHz bus, 20 MHz flash */
 	init_CAN(0, 0x555, 250000); /* Initialize CAN peripheral with initial conditions, which they are the frequency and the ID_RX*/
-	PORT_init(); /* Configure ports */
+	PORT_init_CAN0(); /* Configure ports */
 	LPSPI1_init_master(); /* Initialize LPSPI1 for communication with MC33903 */
 	LPSPI1_init_MC33903(); /* Configure SBC via SPI for CAN transceiver operation */
 

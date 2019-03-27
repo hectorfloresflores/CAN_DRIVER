@@ -69,6 +69,13 @@ void transmit_CAN(CAN_Type *can_selected, uint16_t id_standar,uint8_t DLC,uint32
  */
 void receive_CAN(CAN_Type *can_pointer,uint32_t*RxCODE,uint32_t*ID,uint32_t* DLC, uint32_t* Rx_DATA);
 
-
+/*!
+ \brief
+ This function initialize the port to use the CAN0
+ \param[in] void
+ \param[out] void
+ \return void
+ */
+void PORT_init_CAN0(void);
 
 #endif /* CAN_H_ */
