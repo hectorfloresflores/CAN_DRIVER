@@ -15,6 +15,25 @@ typedef enum{myCAN0
 			,myCAN2
 }myCANType;
 
+typedef struct{
+	CAN_Type *can_selected;
+	uint16_t id_standar;
+	uint8_t DLC;
+	uint32_t word1;
+	uint32_t word2;
+}CAN_transmission_config_t;
+
+
+typedef struct{
+	CAN_Type *can_pointer;
+	uint32_t RxCODE;
+	uint32_t ID;
+	uint32_t DLC;
+	uint32_t Rx_DATA[2];
+}CAN_reception_t;
+
+
+
 /* CAN - Peripheral instance base addresses */
 /** Peripheral CAN0 base address */
 #define CAN0_BASE                                (0x40024000u)
@@ -55,7 +74,7 @@ void init_CAN(uint8_t CAN_base, uint16_t id_Rx, uint64_t frecuency);
  \param[in] uint32_t word2
  \return void
  */
-void transmit_CAN(CAN_Type *can_selected, uint16_t id_standar,uint8_t DLC,uint32_t word1,uint32_t word2);
+void transmit_CAN(CAN_transmission_config_t * transmission_handler);
 
 /*!
  \brief
@@ -67,7 +86,7 @@ void transmit_CAN(CAN_Type *can_selected, uint16_t id_standar,uint8_t DLC,uint32
  \param[out] uint32_t* Rx_DATA
  \return void
  */
-void receive_CAN(CAN_Type *can_pointer,uint32_t*RxCODE,uint32_t*ID,uint32_t* DLC, uint32_t* Rx_DATA);
+void receive_CAN(CAN_reception_t *reception_t_handler);
 
 /*!
  \brief
@@ -77,5 +96,8 @@ void receive_CAN(CAN_Type *can_pointer,uint32_t*RxCODE,uint32_t*ID,uint32_t* DLC
  \return void
  */
 void PORT_init_CAN0(void);
+
+void setID_Rx(uint16_t id, uint16_t id_buffer_index);
+uint8_t verify_ID_Rx(uint32_t id_rx);
 
 #endif /* CAN_H_ */

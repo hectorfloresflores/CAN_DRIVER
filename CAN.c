@@ -19,7 +19,7 @@ uint32_t  RxTIMESTAMP;
 									 /* SRR=1 Tx frame (not req'd for std ID) */
 									 /* RTR = 0: data, not remote tx request frame*/
 
-
+#define MAX_NUM_IDS 15
 #define ID_MSG_SHIFT 18
 #define _32SHIFT 32
 #define _16SHIFT 16
@@ -31,9 +31,11 @@ uint32_t  RxTIMESTAMP;
 #define TIMESTAMP_MASK 0x000FFFF
 #define FLAG1_MB4_MASK 0x00000010
 #define MB_RX 4
+#define DELAY_COUNT_TX 10000
 /*Can init defines*/
 #define CTRL1_CAN 0x00DB0006
 
+uint32_t idX[MAX_NUM_IDS]={0};
 
 #define NODE_A        /* If using 2 boards as 2 nodes, NODE A & B use different CAN IDs */
 
@@ -85,10 +87,10 @@ void init_CAN(uint8_t CAN_base, uint16_t id_Rx, uint64_t frecuency) {
 			 }
 			 /* In FRZ mode, init CAN0 16 msg buf filters */
 			 for( i=0; i<16; i++ ) {
-			 CAN0->RXIMR[i] = 0xFFFFFFFF;
+			 CAN0->RXIMR[i] = 0;
 			 }
 			 /* Global acceptance mask: check all ID bits */
-			 CAN0->RXMGMASK = 0x1FFFFFFF;
+			 CAN0->RXMGMASK = 0;
 			 /* Msg Buf 4, word 0: Enable for reception */
 			 CAN0->RAMn[ 4*MSG_BUF_SIZE + 0] = 0x04000000;
 			 CAN0->RAMn[ 4*MSG_BUF_SIZE + 1] = id_Rx<<ID_MSG_SHIFT;
@@ -176,48 +178,79 @@ void init_CAN(uint8_t CAN_base, uint16_t id_Rx, uint64_t frecuency) {
 
 }
 
-void transmit_CAN(CAN_Type *can_selected, uint16_t id_standar, uint8_t DLC, uint32_t word1, uint32_t word2) {
+void transmit_CAN(CAN_transmission_config_t * transmission_handler) {
 
+	uint32_t delay =0;
     /**Only 8 bytes is permitted to the DLC parameter*/
-	if(DLC>8)
+	if(transmission_handler->DLC>8)
 	{
-		DLC=8;
+		transmission_handler->DLC=8;
 	}
 
-	can_selected->IFLAG1 = CAN_IFLAG1_BUF0I_MASK; /**Clear the MB0 flag, which, is set when some transmission or reception has occurred*/
-	can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 3] = word2; /** Store the MB0 word2 into the embedded RAM memory */
-	can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 2] = word1; /** Store the MB0 word1 into the embedded RAM memory */
-	can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 1] = id_standar<<ID_MSG_SHIFT; /** Set the identifier of the message within the embedded RAM memory */
+	transmission_handler->can_selected->IFLAG1 = CAN_IFLAG1_BUF0I_MASK; /**Clear the MB0 flag, which, is set when some transmission or reception has occurred*/
+	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 3] = transmission_handler->word2; /** Store the MB0 word2 into the embedded RAM memory */
+	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 2] = transmission_handler->word1;; /** Store the MB0 word1 into the embedded RAM memory */
+	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 1] = transmission_handler->id_standar<<ID_MSG_SHIFT; /** Set the identifier of the message within the embedded RAM memory */
 	uint32_t MB_configuration_aux =MB_CAN_BUFF_CONFIG & (~(0XF << _16SHIFT));/** Clean the DLC to set the new DLC value*/
-	can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 0] = MB_configuration_aux | (DLC<<_16SHIFT); /** Store the message buffer configuration and the new DLC value into the embedded RAM memory*/
+	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 0] = MB_configuration_aux | (transmission_handler->DLC<<_16SHIFT); /** Store the message buffer configuration and the new DLC value into the embedded RAM memory*/
 	//can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 0] = MB_CAN_BUFF_CONFIG;
+	for(delay=0;delay<DELAY_COUNT_TX;delay++){}
 
+	transmission_handler->can_selected->IFLAG1 = CAN_IFLAG1_BUF0I_MASK|CAN_IFLAG1_BUF4TO1I_MASK; /**Clear the MB0 flag, which, is set when some transmission or reception has occurred*/
 }
 
-void receive_CAN(CAN_Type *can_pointer,uint32_t*Rx_CODE,uint32_t*Rx_ID,uint32_t* DLC, uint32_t* Rx_DATA){
+void receive_CAN( CAN_reception_t *reception_t_handler){
 
 		uint8_t j;
 		uint32_t dummyRead;
 
 		/** Read CODE of the mailbox field */
-		*Rx_CODE =  (can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CODE_SHIFT_MASK) >> _24_SHIFT;
+		reception_t_handler->RxCODE =  (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CODE_SHIFT_MASK) >> _24_SHIFT;
 		/** Store the received ID */
-		*Rx_ID =	(can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;
+		//if(verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
+		/*reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;		 */
+	//	}
+		reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;
 		/** Store the received DLC */
-		*DLC = (can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CAN_WMBn_CS_DLC_MASK) >> CAN_WMBn_CS_DLC_SHIFT;
+		reception_t_handler->DLC = (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CAN_WMBn_CS_DLC_MASK) >> CAN_WMBn_CS_DLC_SHIFT;
 
 		/** Store into the pointer the data in two words (8 bytes) */
 		for (j = 0; j < 2; j++) {
-			*Rx_DATA = can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 2 + j];
-			Rx_DATA++;
+			reception_t_handler->Rx_DATA[j] = reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 2 + j];
+
 		}
 
 		/** Dummy read of the Time Stamp */
-		RxTIMESTAMP = (can_pointer->RAMn[0 * MSG_BUF_SIZE + 0] & TIMESTAMP_MASK);
+		RxTIMESTAMP = (reception_t_handler->can_pointer->RAMn[0 * MSG_BUF_SIZE + 0] & TIMESTAMP_MASK);
 		/** Dummy read of the timer to unlock message buffers */
-		dummyRead = can_pointer->TIMER;
+		dummyRead = reception_t_handler->can_pointer->TIMER;
 		/** Clear the 4th flag of the Message buffer  */
-		can_pointer->IFLAG1 = FLAG1_MB4_MASK;
+		reception_t_handler->can_pointer->IFLAG1 = FLAG1_MB4_MASK;
 
 
 }
+
+
+void setID_Rx(uint16_t id, uint16_t id_buffer_index){
+
+	if(MAX_NUM_IDS >= id_buffer_index){
+		idX[id_buffer_index-1]=id;
+
+	}
+
+
+}
+
+uint8_t verify_ID_Rx(uint32_t id_rx){
+	uint16_t id_counter=0;
+
+	for(id_counter=0;id_counter<MAX_NUM_IDS;id_counter++){
+		if(id_rx==idX[id_counter]){
+			return 1;
+			break;
+		}
+	}
+
+	return 0;
+}
+
