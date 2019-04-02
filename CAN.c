@@ -202,30 +202,32 @@ void transmit_CAN(CAN_transmission_config_t * transmission_handler) {
 void receive_CAN( CAN_reception_t *reception_t_handler){
 
 		uint8_t j;
-		uint32_t dummyRead;
 
-		/** Read CODE of the mailbox field */
-		reception_t_handler->RxCODE =  (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CODE_SHIFT_MASK) >> _24_SHIFT;
-		/** Store the received ID */
-		//if(verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
-		/*reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;		 */
-	//	}
-		reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;
-		/** Store the received DLC */
-		reception_t_handler->DLC = (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CAN_WMBn_CS_DLC_MASK) >> CAN_WMBn_CS_DLC_SHIFT;
 
-		/** Store into the pointer the data in two words (8 bytes) */
-		for (j = 0; j < 2; j++) {
-			reception_t_handler->Rx_DATA[j] = reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 2 + j];
+		if(verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
+
+
+
+			/** Read CODE of the mailbox field */
+					reception_t_handler->RxCODE =  (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CODE_SHIFT_MASK) >> _24_SHIFT;
+					/** Store the received ID */
+					//if(verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
+					/*reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;		 */
+				//	}
+					reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;
+					/** Store the received DLC */
+					reception_t_handler->DLC = (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CAN_WMBn_CS_DLC_MASK) >> CAN_WMBn_CS_DLC_SHIFT;
+
+					/** Store into the pointer the data in two words (8 bytes) */
+					for (j = 0; j < 2; j++) {
+						reception_t_handler->Rx_DATA[j] = reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 2 + j];
+
+					}
+
+					/** Clear the 4th flag of the Message buffer  */
+					reception_t_handler->can_pointer->IFLAG1 = FLAG1_MB4_MASK;
 
 		}
-
-		/** Dummy read of the Time Stamp */
-		RxTIMESTAMP = (reception_t_handler->can_pointer->RAMn[0 * MSG_BUF_SIZE + 0] & TIMESTAMP_MASK);
-		/** Dummy read of the timer to unlock message buffers */
-		dummyRead = reception_t_handler->can_pointer->TIMER;
-		/** Clear the 4th flag of the Message buffer  */
-		reception_t_handler->can_pointer->IFLAG1 = FLAG1_MB4_MASK;
 
 
 }

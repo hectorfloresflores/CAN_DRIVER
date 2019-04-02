@@ -20,7 +20,7 @@ int main(void) {
 
 	uint32_t rx_msg_count = 0;
 	CAN_transmission_config_t trans_configuration;
-	CAN_reception_t reception_data;
+	static CAN_reception_t reception_data;
 
 	WDOG_disable();
 	SOSC_init_8MHz(); /* Initialize system oscillator for 8 MHz xtal */
@@ -40,6 +40,8 @@ int main(void) {
 
 	reception_data.can_pointer=CAN0;
 
+	setID_Rx(0x524, 2);
+	setID_Rx(0x234, 3);
 
 
 #if DEVICE_1 /** Verify if this program is going to be used for the DEVICE 1*/
