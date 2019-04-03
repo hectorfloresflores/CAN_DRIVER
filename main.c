@@ -1,69 +1,126 @@
 /*
- * CAN.h
+ * Copyright (c) 2015 - 2016 , Freescale Semiconductor, Inc.
+ * Copyright 2016-2017 NXP
+ * All rights reserved.
  *
- *  Created on: 24/03/2019
- *      Author: Cognati
+ * THIS SOFTWARE IS PROVIDED BY NXP "AS IS" AND ANY EXPRESSED OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL NXP OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* ###################################################################
+**     Filename    : main.c
+**     Project     : freertos_s32k144
+**     Processor   : S32K144_100
+**     Version     : Driver 01.00
+**     Compiler    : GNU C Compiler
+**     Date/Time   : 2015-07-03, 14:05, # CodeGen: 0
+**     Abstract    :
+**         Main module.
+**         This module contains user's application code.
+**     Settings    :
+**     Contents    :
+**         No public methods
+**
+** ###################################################################*/
+/*!
+** @file main.c
+** @version 01.00
+** @brief
+**         Main module.
+**         This module contains user's application code.
+*/
+/*!
+**  @addtogroup main_module main module documentation
+**  @{
+*/
+/* MODULE main */
+
+
+/* Including needed modules to compile this module/procedure */
+#include "Cpu.h"
+#include "clockMan1.h"
+#include "pin_mux.h"
+#include "FreeRTOS.h"
+#if CPU_INIT_CONFIG
+  #include "Init_Config.h"
+#endif
+
+volatile int exit_code = 0;
+/* User includes (#include below this line is not maintained by Processor Expert) */
+
+#include <stdint.h>
+#include <stdbool.h>
 #include "S32K144.h" /* include peripheral declarations S32K144 */
 #include "CAN.h"/** Include the library that includes the API to use the CAN protocol*/
 #include "LPSPI.h"
 #include "clocks_and_modes.h"
 
- /**It is necessary  to select which device is going to be used  */
+/**It is necessary  to select which device is going to be used  */
 #define DEVICE_1 1
 #define DEVICE_2 0
 
+extern void rtos_start(void);
+#define PEX_RTOS_START rtos_start
 
-/**This program is able to test the CAN protocol making transmissions and receptions with other devices*/
-int main(void) {
+/*!
+  \brief The main function for the project.
+  \details The startup initialization sequence is the following:
+ * - __start (startup asm routine)
+ * - __init_hardware()
+ * - main()
+ *   - PE_low_level_init()
+ *     - Common_Init()
+ *     - Peripherals_Init()
+*/
+int main(void)
+{
+  /* Write your local variable definition here */
 
-	uint32_t rx_msg_count = 0;
-	CAN_transmission_config_t trans_configuration;
-	static CAN_reception_t reception_data;
-
-	WDOG_disable();
-	SOSC_init_8MHz(); /* Initialize system oscillator for 8 MHz xtal */
-	SPLL_init_160MHz(); /* Initialize SPLL to 160 MHz with 8 MHz SOSC */
-	NormalRUNmode_80MHz(); /* Init clocks: 80 MHz sysclk & core, 40 MHz bus, 20 MHz flash */
-	init_CAN(0, 0x555, 250000); /* Initialize CAN peripheral with initial conditions, which they are the frequency and the ID_RX*/
-	PORT_init_CAN0(); /* Configure ports */
-	LPSPI1_init_master(); /* Initialize LPSPI1 for communication with MC33903 */
-	LPSPI1_init_MC33903(); /* Configure SBC via SPI for CAN transceiver operation */
-
-	trans_configuration.can_selected=CAN0;
-	trans_configuration.DLC=8;
-	trans_configuration.id_standar=0x111;
-	trans_configuration.word1=0xB;
-	trans_configuration.word2=0xB;
-
-
-	reception_data.can_pointer=CAN0;
-
-	setID_Rx(0x524, 2);
-	setID_Rx(0x234, 3);
+  /*** Processor Expert internal initialization. DON'T REMOVE THIS CODE!!! ***/
+  #ifdef PEX_RTOS_INIT
+    PEX_RTOS_INIT();                 /* Initialization of the selected RTOS. Macro is defined by the RTOS component. */
+  #endif
+  /*** End of Processor Expert internal initialization.                    ***/
 
 
-#if DEVICE_1 /** Verify if this program is going to be used for the DEVICE 1*/
-	transmit_CAN(&trans_configuration); /** The DEVICE 1  makes a transmission */
-#endif
-	for (;;) { /* Loop: if a msg is received, transmit a msg */
-		if ((CAN0->IFLAG1 >> 4) & 1) { /* If CAN 0 MB 4 flag is set (received msg), read MB4 */
-#if DEVICE_1
-			receive_CAN(&reception_data); /** The DEVICE 1  makes a reception */
-#elif DEVICE_2 /** Verify if this program is going to be used for the DEVICE 2*/
-			receive_CAN(&reception_data); /** The DEVICE 2  makes a reception */
-#endif
-			rx_msg_count++; /* Increment receive msg counter */
-			if (rx_msg_count == 1000) { /* If 1000 messages have been received, */
-				PTD->PTOR |= 1 << 16; /*   toggle output port D16 (Green LED) */
-				rx_msg_count = 0; /*   and reset message counter */
-			}
-#if DEVICE_1
-			transmit_CAN(&trans_configuration);  /** The DEVICE 1  makes a transmission */
-#elif DEVICE_2
-			transmit_CAN(&trans_configuration);  /** The DEVICE 2  makes a transmission */
-#endif
-		}
-	}
-}
+
+
+  /* All of the code is in rtos.c file */
+
+  /*** Don't write any code pass this line, or it will be deleted during code generation. ***/
+  /*** RTOS startup code. Macro PEX_RTOS_START is defined by the RTOS component. DON'T MODIFY THIS CODE!!! ***/
+  #ifdef PEX_RTOS_START
+    PEX_RTOS_START();                  /* Startup of the selected RTOS. Macro is defined by the RTOS component. */
+  #endif
+  /*** End of RTOS startup code.  ***/
+  /*** Processor Expert end of main routine. DON'T MODIFY THIS CODE!!! ***/
+  for(;;) {
+    if(exit_code != 0) {
+      break;
+    }
+  }
+  return exit_code;
+  /*** Processor Expert end of main routine. DON'T WRITE CODE BELOW!!! ***/
+} /*** End of main routine. DO NOT MODIFY THIS TEXT!!! ***/
+
+/* END main */
+/*!
+** @}
+*/
+/*
+** ###################################################################
+**
+**     This file was created by Processor Expert 10.1 [05.21]
+**     for the Freescale S32K series of microcontrollers.
+**
+** ###################################################################
+*/
