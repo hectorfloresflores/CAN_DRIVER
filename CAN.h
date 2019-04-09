@@ -9,6 +9,8 @@
 #define CAN_H_
 
 #include "S32K144.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
 
 typedef enum{myCAN0
 			,myCAN1
@@ -16,6 +18,7 @@ typedef enum{myCAN0
 }myCANType;
 
 typedef struct{
+	xSemaphoreHandle  trans_semaphore;
 	CAN_Type *can_selected;
 	uint16_t id_standar;
 	uint8_t DLC;
@@ -25,6 +28,7 @@ typedef struct{
 
 
 typedef struct{
+	xSemaphoreHandle  recv_semaphore;
 	CAN_Type *can_pointer;
 	uint32_t RxCODE;
 	uint32_t ID;
@@ -99,5 +103,5 @@ void PORT_init_CAN0(void);
 
 void setID_Rx(uint16_t id, uint16_t id_buffer_index);
 uint8_t verify_ID_Rx(uint32_t id_rx);
-
+uint8_t get_Rx_status(CAN_reception_t *reception_t_handler);
 #endif /* CAN_H_ */

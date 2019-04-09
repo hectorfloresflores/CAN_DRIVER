@@ -9,16 +9,6 @@
 #include "S32K144.h" /* include peripheral declarations S32K144 */
 
 
-uint32_t  RxTIMESTAMP;
-
-
-#define MSG_BUF_SIZE  4    /* Msg Buffer Size. (CAN 2.0AB: 2 hdr +  2 data= 4 words) */
-#define MB_CAN_BUFF_CONFIG 0xc480000 /* EDL,BRS,ESI=0: CANFD not used */
-									 /* CODE=0xC: Activate msg buf to transmit */
-									 /* IDE=0: Standard ID */
-									 /* SRR=1 Tx frame (not req'd for std ID) */
-									 /* RTR = 0: data, not remote tx request frame*/
-
 #define MAX_NUM_IDS 15
 #define ID_MSG_SHIFT 18
 #define _32SHIFT 32
@@ -32,12 +22,18 @@ uint32_t  RxTIMESTAMP;
 #define FLAG1_MB4_MASK 0x00000010
 #define MB_RX 4
 #define DELAY_COUNT_TX 50000
-/*Can init defines*/
 #define CTRL1_CAN 0x00DB0006
+#define MSG_BUF_SIZE  4    /* Msg Buffer Size. (CAN 2.0AB: 2 hdr +  2 data= 4 words) */
+#define MB_CAN_BUFF_CONFIG 0xc480000 /* EDL,BRS,ESI=0: CANFD not used */
+									 /* CODE=0xC: Activate msg buf to transmit */
+									 /* IDE=0: Standard ID */
+									 /* SRR=1 Tx frame (not req'd for std ID) */
+									 /* RTR = 0: data, not remote tx request frame*/
 
+uint32_t  RxTIMESTAMP;
 uint32_t idX[MAX_NUM_IDS]={0};
 
-#define NODE_A        /* If using 2 boards as 2 nodes, NODE A & B use different CAN IDs */
+
 
 
 void PORT_init_CAN0(void) {
@@ -180,6 +176,8 @@ void init_CAN(uint8_t CAN_base, uint16_t id_Rx, uint64_t frecuency) {
 
 void transmit_CAN(CAN_transmission_config_t * transmission_handler) {
 
+	/** Takes the mutex to ensure the reading, the critical section*/
+	xSemaphoreTake(transmission_handler->trans_semaphore,portMAX_DELAY);
 	uint32_t delay =0;
     /**Only 8 bytes is permitted to the DLC parameter*/
 	if(transmission_handler->DLC>8)
@@ -193,10 +191,13 @@ void transmit_CAN(CAN_transmission_config_t * transmission_handler) {
 	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 1] = transmission_handler->id_standar<<ID_MSG_SHIFT; /** Set the identifier of the message within the embedded RAM memory */
 	uint32_t MB_configuration_aux =MB_CAN_BUFF_CONFIG & (~(0XF << _16SHIFT));/** Clean the DLC to set the new DLC value*/
 	transmission_handler->can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 0] = MB_configuration_aux | (transmission_handler->DLC<<_16SHIFT); /** Store the message buffer configuration and the new DLC value into the embedded RAM memory*/
-	//can_selected->RAMn[MB_TX * MSG_BUF_SIZE + 0] = MB_CAN_BUFF_CONFIG;
+
 	for(delay=0;delay<DELAY_COUNT_TX;delay++){}
 
 	transmission_handler->can_selected->IFLAG1 = CAN_IFLAG1_BUF0I_MASK|CAN_IFLAG1_BUF4TO1I_MASK; /**Clear the MB0 flag, which, is set when some transmission or reception has occurred*/
+	/** Release the semaphore*/
+	xSemaphoreGive(transmission_handler->trans_semaphore);
+
 }
 
 void receive_CAN( CAN_reception_t *reception_t_handler){
@@ -204,12 +205,12 @@ void receive_CAN( CAN_reception_t *reception_t_handler){
 	uint32_t dummyRead;
 
 		if( verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
+			/** Takes the mutex to ensure the reading, the critical section*/
+			xSemaphoreTake(reception_t_handler->recv_semaphore,portMAX_DELAY);
+
 			/** Read CODE of the mailbox field */
 			reception_t_handler->RxCODE =  (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CODE_SHIFT_MASK) >> _24_SHIFT;
 			/** Store the received ID */
-			//if(verify_ID_Rx((reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT)){
-			/*reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;		 */
-		//	}
 			reception_t_handler->ID =	(reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 1] & CAN_WMBn_ID_ID_MASK) >> ID_MSG_SHIFT;
 			/** Store the received DLC */
 			reception_t_handler->DLC = (reception_t_handler->can_pointer->RAMn[ MB_RX * MSG_BUF_SIZE + 0] & CAN_WMBn_CS_DLC_MASK) >> CAN_WMBn_CS_DLC_SHIFT;
@@ -226,10 +227,13 @@ void receive_CAN( CAN_reception_t *reception_t_handler){
 			dummyRead = reception_t_handler->can_pointer->TIMER;
 			/** Clear the 4th flag of the Message buffer  */
 			reception_t_handler->can_pointer->IFLAG1 = FLAG1_MB4_MASK;
+
+			/** Release the semaphore*/
+			xSemaphoreGive(reception_t_handler->recv_semaphore);
 		}
 }
 
-
+/*Function that help us set ID for RX*/
 void setID_Rx(uint16_t id, uint16_t id_buffer_index){
 
 	if(MAX_NUM_IDS >= id_buffer_index){
@@ -240,6 +244,7 @@ void setID_Rx(uint16_t id, uint16_t id_buffer_index){
 
 }
 
+/*Verify if RX ID exists*/
 uint8_t verify_ID_Rx(uint32_t id_rx){
 	uint16_t id_counter=0;
 
@@ -253,3 +258,11 @@ uint8_t verify_ID_Rx(uint32_t id_rx){
 	return 0;
 }
 
+/*Get the RX status*/
+uint8_t get_Rx_status(CAN_reception_t *reception_t_handler){
+	if ((reception_t_handler->can_pointer->IFLAG1 >> 4) & 1) {
+		return 1;
+	}else{
+		return 0;
+	}
+}

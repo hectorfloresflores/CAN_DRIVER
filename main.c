@@ -50,6 +50,7 @@
 #include "clockMan1.h"
 #include "pin_mux.h"
 #include "FreeRTOS.h"
+#include "adConv1.h"
 #if CPU_INIT_CONFIG
   #include "Init_Config.h"
 #endif
@@ -90,9 +91,6 @@ int main(void)
     PEX_RTOS_INIT();                 /* Initialization of the selected RTOS. Macro is defined by the RTOS component. */
   #endif
   /*** End of Processor Expert internal initialization.                    ***/
-
-
-
 
   /* All of the code is in rtos.c file */
 
