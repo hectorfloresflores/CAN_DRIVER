@@ -49,7 +49,11 @@
 #include "Cpu.h"
 #include "clockMan1.h"
 #include "pin_mux.h"
+#include "lpi2c1.h"
+#include "osif1.h"
+#include "flexTimer1.h"
 #include "FreeRTOS.h"
+#include "dmaController1.h"
 #include "adConv1.h"
 #if CPU_INIT_CONFIG
   #include "Init_Config.h"
@@ -85,12 +89,15 @@ extern void rtos_start(void);
 int main(void)
 {
   /* Write your local variable definition here */
+	/* Allocate memory for the LPI2C driver state structure */
+	    lpi2c_master_state_t lpi2c1MasterState;
 
   /*** Processor Expert internal initialization. DON'T REMOVE THIS CODE!!! ***/
   #ifdef PEX_RTOS_INIT
     PEX_RTOS_INIT();                 /* Initialization of the selected RTOS. Macro is defined by the RTOS component. */
   #endif
-  /*** End of Processor Expert internal initialization.                    ***/
+
+
 
   /* All of the code is in rtos.c file */
 

@@ -24,53 +24,57 @@
 #include "LPSPI.h"
 #include "clocks_and_modes.h"
 #include "ADC.h"
+#include "osif1.h"
+#include "lpi2c1.h"
+#include "dmaController1.h"
+#include "flexTimer1.h"
 
-
+#define ANGLE_SERVO(A)  FTM_MAX_DUTY_CYCLE-((((A/18.0) + 2.5)*FTM_MAX_DUTY_CYCLE)/100)
+ftm_state_t ftmStateStruct;
 
 /*Data structures for CAN protocol*/
 static CAN_transmission_config_t trans_configuration;
 static CAN_reception_t reception_data;
-
 
 /* Priorities at which the tasks are created. */
 #define RECEIVE_TASK_PRIORITY		( tskIDLE_PRIORITY + 2 )
 #define	SEND_TASK_PRIORITY		( tskIDLE_PRIORITY + 1 )
 
 /* The rate at which data is sent to the queue, specified in milliseconds, and
-converted to ticks using the portTICK_PERIOD_MS constant. */
+ converted to ticks using the portTICK_PERIOD_MS constant. */
 #define FREQUENCY_MS			( 200 / portTICK_PERIOD_MS )
+#define FREQUENCY_500MS			( 500 / portTICK_PERIOD_MS )
 
 /* The LED will remain on until the button has not been pushed for a full
-5000ms. */
+ 5000ms. */
 #define mainBUTTON_LED_TIMER_PERIOD_MS		( 5000UL / portTICK_PERIOD_MS )
-
 
 /* The LED toggle by the queue receive task (blue). */
 #define mainTASK_CONTROLLED_LED				( 1UL << 0UL )
 
 /* The LED turned on by the button interrupt, and turned off by the LED timer
-(green). */
+ (green). */
 #define mainTIMER_CONTROLLED_LED			( 1UL << 1UL )
 
 /* The vector used by the GPIO port C.  Button SW7 is configured to generate
-an interrupt on this port. */
+ an interrupt on this port. */
 #define mainGPIO_C_VECTOR					( 61 )
 
 /* A block time of zero simply means "don't block". */
 #define mainDONT_BLOCK						( 0UL )
 
-/*-----------------------------------------------------------*/
-
 /*
  * Setup the NVIC, LED outputs, and button inputs.
  */
-static void prvSetupHardware( void );
+static void prvSetupHardware(void);
 /*
  * The tasks as described in the comments at the top of this file.
  */
-static void canAppRx( void *pvParameters );
-static void canAppTx( void *pvParameters );
-static void adc( void *pvParameters );
+static void canAppRx(void *pvParameters);
+static void canAppTx(void *pvParameters);
+static void adc(void *pvParameters);
+static void temp_PWM_App(void *pvParameters);
+static uint16_t getTemperature(void);
 
 /*Global variables*/
 bool flagGpio = false;
@@ -82,179 +86,256 @@ void setFlagGpio(bool flag);
 void gpioISR12(void);
 /*Initialize gpioInit*/
 void gpioInit(void);
+/* Allocate memory for the LPI2C driver state structure */
+static lpi2c_master_state_t lpi2c1MasterState;
 
+static uint16_t getTemperature(void) {
+	/*-----------------------------------------------------------*/
 
+	/* Declaration of the LPI2C transfer buffer */
+	static uint8_t buffer[4];
+	uint8_t writecomand[2] = { 0x05 };
+
+	LPI2C_DRV_MasterSendDataBlocking(INST_LPI2C1, writecomand, 1, false,
+	OSIF_WAIT_FOREVER);
+
+	LPI2C_DRV_MasterReceiveDataBlocking(INST_LPI2C1, buffer, 2, true,
+	OSIF_WAIT_FOREVER);
+
+	uint8_t UpperByte = buffer[0];
+	uint8_t LowerByte = buffer[1];
+	uint16_t Temperature = 0;
+	UpperByte = UpperByte & 0x1F;
+	if ((UpperByte & 0x10) == 0x10) {
+		UpperByte = UpperByte & 0xF;
+		Temperature = 256 - (UpperByte * 16 + LowerByte / 16);
+	} else {
+		Temperature = (UpperByte * 16 + LowerByte / 16);
+	}
+
+	return Temperature;
+}
 /*
  * The LED timer callback function.  This does nothing but switch off the
  * LED defined by the mainTIMER_CONTROLLED_LED constant.
  */
-static void prvButtonLEDTimerCallback( TimerHandle_t xTimer );
+static void prvButtonLEDTimerCallback(TimerHandle_t xTimer);
 
 /*-----------------------------------------------------------*/
 
-
-
 /* The LED software timer.  This uses prvButtonLEDTimerCallback() as its callback
-function. */
+ function. */
 static TimerHandle_t xButtonLEDTimer = NULL;
 
 /*-----------------------------------------------------------*/
 
-void rtos_start( void )
-{
+void rtos_start(void) {
 
 	/**Transmission initialization*/
-	trans_configuration.can_selected=CAN0;
-	trans_configuration.DLC=8;
-	trans_configuration.id_standar=0x111;
-	trans_configuration.word1=0xB;
-	trans_configuration.word2=0xB;
-	trans_configuration.trans_semaphore=xSemaphoreCreateMutex();
+	trans_configuration.can_selected = CAN0;
+	trans_configuration.DLC = 8;
+	trans_configuration.id_standar = 0x111;
+	trans_configuration.word1 = 0xB;
+	trans_configuration.word2 = 0xB;
+	trans_configuration.trans_semaphore = xSemaphoreCreateMutex();
 
 	/**Reception initialization*/
-	reception_data.can_pointer=CAN0;
-	reception_data.recv_semaphore=xSemaphoreCreateMutex();
+	reception_data.can_pointer = CAN0;
+	reception_data.recv_semaphore = xSemaphoreCreateMutex();
 
 	/**Set the IDs that we want to listen*/
 	setID_Rx(0x524, 2);
 	setID_Rx(0x234, 3);
 
-
 	/* Configure the NVIC, LED outputs and button inputs. */
 	prvSetupHardware();
 
 	/* Start the two tasks as described in the comments at the top of this
-	file. */
+	 file. */
 
-	xTaskCreate( canAppRx, "RX", configMINIMAL_STACK_SIZE, NULL, RECEIVE_TASK_PRIORITY, NULL );
-	xTaskCreate( canAppTx, "TX", configMINIMAL_STACK_SIZE, NULL, SEND_TASK_PRIORITY, NULL );
-	xTaskCreate( adc, "TX", configMINIMAL_STACK_SIZE, NULL, SEND_TASK_PRIORITY, NULL );
-
-
+	xTaskCreate(canAppRx, "RX", configMINIMAL_STACK_SIZE, NULL, 0, NULL);
+	xTaskCreate(canAppTx, "TX", configMINIMAL_STACK_SIZE, NULL, 0, NULL);
+	//xTaskCreate(adc, "TX", configMINIMAL_STACK_SIZE, NULL, SEND_TASK_PRIORITY,NULL);
+	xTaskCreate(temp_PWM_App, "temp_PWM", configMINIMAL_STACK_SIZE, NULL, 0,
+			NULL);
 
 	/* Create the software timer that is responsible for turning off the LED
-	if the button is not pushed within 5000ms, as described at the top of
-	this file. */
-	xButtonLEDTimer = xTimerCreate( "ButtonLEDTimer", 			/* A text name, purely to help debugging. */
-								mainBUTTON_LED_TIMER_PERIOD_MS,	/* The timer period, in this case 5000ms (5s). */
-								pdFALSE,						/* This is a one shot timer, so xAutoReload is set to pdFALSE. */
-								( void * ) 0,					/* The ID is not used, so can be set to anything. */
-								prvButtonLEDTimerCallback		/* The callback function that switches the LED off. */
-							);
+	 if the button is not pushed within 5000ms, as described at the top of
+	 this file. */
+	xButtonLEDTimer = xTimerCreate("ButtonLEDTimer", /* A text name, purely to help debugging. */
+	mainBUTTON_LED_TIMER_PERIOD_MS, /* The timer period, in this case 5000ms (5s). */
+	pdFALSE, /* This is a one shot timer, so xAutoReload is set to pdFALSE. */
+	(void *) 0, /* The ID is not used, so can be set to anything. */
+	prvButtonLEDTimerCallback /* The callback function that switches the LED off. */
+	);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
 
-
 	/* If all is well, the scheduler will now be running, and the following line
-	will never be reached.  If the following line does execute, then there was
-	insufficient FreeRTOS heap memory available for the idle and/or timer tasks
-	to be created.  See the memory management section on the FreeRTOS web site
-	for more details. */
-	for( ;; );
+	 will never be reached.  If the following line does execute, then there was
+	 insufficient FreeRTOS heap memory available for the idle and/or timer tasks
+	 to be created.  See the memory management section on the FreeRTOS web site
+	 for more details. */
+	for (;;)
+		;
 }
 /*-----------------------------------------------------------*/
 
-static void prvButtonLEDTimerCallback( TimerHandle_t xTimer )
-{
+static void prvButtonLEDTimerCallback(TimerHandle_t xTimer) {
 	/* Casting xTimer to void because it is unused */
-	(void)xTimer;
+	(void) xTimer;
 
 	/* The timer has expired - so no button pushes have occurred in the last
-	five seconds - turn the LED off. */
+	 five seconds - turn the LED off. */
 	GPIO_HAL_SetPins(PORTC_BASE, (1 << LED1));
 }
 /*-----------------------------------------------------------*/
 
 /* The ISR executed when the user button is pushed. */
-void vPort_C_ISRHandler( void )
-{
-    portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+void vPort_C_ISRHandler(void) {
+	portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
 	/* The button was pushed, so ensure the LED is on before resetting the
-	LED timer.  The LED timer will turn the LED off if the button is not
-	pushed within 5000ms. */
-    GPIO_HAL_ClearPins(LED_GPIO, (1 << LED1));
+	 LED timer.  The LED timer will turn the LED off if the button is not
+	 pushed within 5000ms. */
+	GPIO_HAL_ClearPins(LED_GPIO, (1 << LED1));
 	/* This interrupt safe FreeRTOS function can be called from this interrupt
-	because the interrupt priority is below the
-	configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY setting in FreeRTOSConfig.h. */
-	xTimerResetFromISR( xButtonLEDTimer, &xHigherPriorityTaskWoken );
+	 because the interrupt priority is below the
+	 configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY setting in FreeRTOSConfig.h. */
+	xTimerResetFromISR(xButtonLEDTimer, &xHigherPriorityTaskWoken);
 
 	/* Clear the interrupt before leaving. */
 
-PORT_HAL_ClearPinIntFlagCmd(PORTC,12);
+	PORT_HAL_ClearPinIntFlagCmd(PORTC, 12);
 	/* If calling xTimerResetFromISR() caused a task (in this case the timer
-	service/daemon task) to unblock, and the unblocked task has a priority
-	higher than or equal to the task that was interrupted, then
-	xHigherPriorityTaskWoken will now be set to pdTRUE, and calling
-	portEND_SWITCHING_ISR() will ensure the unblocked task runs next. */
-	portEND_SWITCHING_ISR( xHigherPriorityTaskWoken );
+	 service/daemon task) to unblock, and the unblocked task has a priority
+	 higher than or equal to the task that was interrupted, then
+	 xHigherPriorityTaskWoken will now be set to pdTRUE, and calling
+	 portEND_SWITCHING_ISR() will ensure the unblocked task runs next. */
+	portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 /*-----------------------------------------------------------*/
 
 /*-----------------------------------------------------------*/
 /*Task for receiving CAN protocol*/
-static void canAppRx( void *pvParameters )
-{
+static void canAppRx(void *pvParameters) {
 	/*Create tick timer*/
 	TickType_t xNextWakeTime;
 	/*Get function parameters*/
-	(void)pvParameters;
+	(void) pvParameters;
 	/*Get the tick count from FreeRTOS*/
 	xNextWakeTime = xTaskGetTickCount();
 
-	for( ;; ){
+	for (;;) {
 		/*If detect a receive flag go through*/
-		if(get_Rx_status(&reception_data)){
+		if (get_Rx_status(&reception_data)) {
 
 			receive_CAN(&reception_data);
 
 		}
 		/*Task Delay*/
-		vTaskDelayUntil( &xNextWakeTime, FREQUENCY_MS );
+		vTaskDelayUntil(&xNextWakeTime, FREQUENCY_MS);
 
 	}
 }
 
 /*CAN for trasmiting CAN protocol*/
-static void canAppTx( void *pvParameters )
-{
+static void temp_PWM_App(void *pvParameters) {
 	/*Tick time var*/
 	TickType_t xNextWakeTime;
 	/*Get function parameters*/
-	(void)pvParameters;
+	(void) pvParameters;
+	/*Get Tick count*/
+	xNextWakeTime = xTaskGetTickCount();
+	static uint16_t last_temp = 0;
+	static uint16_t current_temp = 0;
+	static uint8_t angle = 0;
+
+	for (;;) {
+
+		/*Transmit CAN*/
+
+		current_temp = getTemperature();
+
+		if (current_temp > last_temp) {
+
+			angle = angle + 30;
+
+			if (angle > 150) {
+				angle = 160;
+
+			}
+
+		} else if (current_temp < last_temp) {
+
+			angle = angle - 30;
+
+			if (angle < 10) {
+				angle = 10;
+
+			}
+
+		}
+
+		FTM_DRV_UpdatePwmChannel(INST_FLEXTIMER1, 0U,
+				FTM_PWM_UPDATE_IN_DUTY_CYCLE, ANGLE_SERVO(angle), 0, true);
+
+		last_temp = current_temp;
+
+		vTaskDelayUntil(&xNextWakeTime, FREQUENCY_500MS);
+
+	}
+}
+
+/*CAN for trasmiting CAN protocol*/
+static void canAppTx(void *pvParameters) {
+	/*Tick time var*/
+	TickType_t xNextWakeTime;
+	/*Get function parameters*/
+	(void) pvParameters;
 	/*Get Tick count*/
 	xNextWakeTime = xTaskGetTickCount();
 
-	for( ;; ){
+	for (;;) {
 
-		/*Transmit CAN*/
-		transmit_CAN(&trans_configuration);
-		/*Toogle led for transmiting*/
-		GPIO_HAL_TogglePins(LED_GPIO, (1 << LED1) | (1 << LED2));
-		/*Task delay*/
-		vTaskDelayUntil( &xNextWakeTime, FREQUENCY_MS );
+		if (true == getFlagGpio()) {
 
+			getTemperature();
+			/*Set flag to false to avoid sending adc value next time until is pressed again*/
+			setFlagGpio(false);
+			/*Load the ADC value in to the CAN struct*/
+			trans_configuration.word1 = getAdcValue();
+			trans_configuration.word2 = getTemperature();
+			/*Transmit CAN*/
+			transmit_CAN(&trans_configuration);
+			/*Toogle led for transmiting*/
+			//GPIO_HAL_TogglePins(LED_GPIO, (1 << LED1) | (1 << LED2));
+			/*Task delay*/
+
+		}
+		//vTaskDelayUntil(&xNextWakeTime, FREQUENCY_MS);
 
 	}
 }
 
 /*ADC task for read voltage*/
-static void adc( void *pvParameters )
-{
+static void adc(void *pvParameters) {
 
 	/*Tick time var*/
 	TickType_t xNextWakeTime;
 	/*Get function parameters*/
-	(void)pvParameters;
+	(void) pvParameters;
 	/*Get Tick count*/
 	xNextWakeTime = xTaskGetTickCount();
+
 	/*Var to save the value and volatile for avoid optimizing*/
 	volatile uint16_t var = 0;
-	for( ;; ){
+	for (;;) {
 
 		/*If a button is pressed send ADC value*/
-		if(true == getFlagGpio()){
+		if (true == getFlagGpio()) {
+			getTemperature();
 			/*Set flag to false to avoid sending adc value next time until is pressed again*/
 			setFlagGpio(false);
 			/*Get ADC value*/
@@ -262,28 +343,26 @@ static void adc( void *pvParameters )
 			/*Load the ADC value in to the CAN struct*/
 			trans_configuration.word1 = var;
 			/*Task delay*/
-			vTaskDelayUntil( &xNextWakeTime, FREQUENCY_MS );
+			vTaskDelayUntil(&xNextWakeTime, FREQUENCY_MS);
 
 		}
 
 	}
 }
 
-
-
 /*-----------------------------------------------------------*/
 
-static void prvSetupHardware( void )
-{
+static void prvSetupHardware(void) {
 
-    /* Initialize and configure clocks
-     *  -   Setup system clocks, dividers
-     *  -   see clock manager component for more details
-     */
-    CLOCK_SYS_Init(g_clockManConfigsArr, CLOCK_MANAGER_CONFIG_CNT, g_clockManCallbacksArr, CLOCK_MANAGER_CALLBACK_CNT);
-    CLOCK_SYS_UpdateConfiguration(0U, CLOCK_MANAGER_POLICY_AGREEMENT);
+	/* Initialize and configure clocks
+	 *  -   Setup system clocks, dividers
+	 *  -   see clock manager component for more details
+	 */
+	CLOCK_SYS_Init(g_clockManConfigsArr, CLOCK_MANAGER_CONFIG_CNT,
+			g_clockManCallbacksArr, CLOCK_MANAGER_CALLBACK_CNT);
+	CLOCK_SYS_UpdateConfiguration(0U, CLOCK_MANAGER_POLICY_AGREEMENT);
 
-    WDOG_disable();/*Disable watchdog*/
+	WDOG_disable();/*Disable watchdog*/
 	SOSC_init_8MHz(); /* Initialize system oscillator for 8 MHz xtal */
 	SPLL_init_160MHz(); /* Initialize SPLL to 160 MHz with 8 MHz SOSC */
 	NormalRUNmode_80MHz(); /* Init clocks: 80 MHz sysclk & core, 40 MHz bus, 20 MHz flash */
@@ -292,7 +371,9 @@ static void prvSetupHardware( void )
 	LPSPI1_init_master(); /* Initialize LPSPI1 for communication with MC33903 */
 	LPSPI1_init_MC33903(); /* Configure SBC via SPI for CAN transceiver operation */
 
-
+	FTM_DRV_Init(INST_FLEXTIMER1, &flexTimer1_InitConfig, &ftmStateStruct);
+	/* Initialize FTM PWM channel */
+	FTM_DRV_InitPwm(INST_FLEXTIMER1, &flexTimer1_PwmConfig);
 
 	/* Change BTN1 to input */
 	GPIO_HAL_SetPinsDirection(BTN_GPIO, ~(1 << BTN_PIN));
@@ -301,138 +382,143 @@ static void prvSetupHardware( void )
 	GPIO_HAL_SetPins(LED_GPIO, (0 << LED1) | (0 << LED2));
 
 	/* Install Button interrupt handler */
-    INT_SYS_InstallHandler(BTN_PORT_IRQn, vPort_C_ISRHandler, (isr_t *)NULL);
+	INT_SYS_InstallHandler(BTN_PORT_IRQn, vPort_C_ISRHandler, (isr_t *) NULL);
 
+	PINS_DRV_Init(NUM_OF_CONFIGURED_PINS, g_pin_mux_InitConfigArr);
 
-	PINS_DRV_Init(NUM_OF_CONFIGURED_PINS,g_pin_mux_InitConfigArr);
+	/* Enable Button interrupt handler */
+	INT_SYS_EnableIRQ(BTN_PORT_IRQn);
 
-    /* Enable Button interrupt handler */
-    INT_SYS_EnableIRQ(BTN_PORT_IRQn);
+	/* The interrupt calls an interrupt safe API function - so its priority must
+	 be equal to or lower than configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY. */
+	INT_SYS_SetPriority( BTN_PORT_IRQn,
+	configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
 
-    /* The interrupt calls an interrupt safe API function - so its priority must
-    be equal to or lower than configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY. */
-    INT_SYS_SetPriority( BTN_PORT_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY );
+	// Set falling edge isr
+	PORT_HAL_SetPinIntSel(PORTC_BASE, 12, PORT_INT_FALLING_EDGE);
 
+	//		Create a enum with PORTC ISR
+	IRQn_Type gpio_irq_id = PORTC_IRQn;
 
-   // Set falling edge isr
-    		PORT_HAL_SetPinIntSel(PORTC_BASE,12,PORT_INT_FALLING_EDGE);
+	//    Set ISR function
+	INT_SYS_InstallHandler(gpio_irq_id, &gpioISR12, (isr_t*) 0);
 
-    //		Create a enum with PORTC ISR
-    		IRQn_Type gpio_irq_id = PORTC_IRQn;
+	//  Enable GPIO ISR
+	INT_SYS_EnableIRQ(gpio_irq_id);
 
-    	//    Set ISR function
-    	    INT_SYS_InstallHandler(gpio_irq_id, &gpioISR12, (isr_t*) 0);
+	INT_SYS_SetPriority(gpio_irq_id,
+	configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
 
-    	  //  Enable GPIO ISR
-    	    INT_SYS_EnableIRQ(gpio_irq_id);
+	INT_SYS_SetPriority(LPI2C0_Master_IRQn,
+	configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
+	/* Initialize Interrupt priority for FlexIO I2C driver as bus master */
+	INT_SYS_SetPriority(FLEXIO_IRQn,
+	configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
 
-    	    INT_SYS_SetPriority( gpio_irq_id, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY );
+	LPI2C_DRV_MasterInit(0, &lpi2c1_MasterConfig0, &lpi2c1MasterState);
+
 }
 
-
-
-
-bool getFlagGpio(void){
+bool getFlagGpio(void) {
 
 	return flagGpio;
 
 }
 
-void setFlagGpio(bool flag){
+void setFlagGpio(bool flag) {
 
 	flagGpio = flag;
 
 }
 
-void gpioISR12(void){
+void gpioISR12(void) {
 
 	/*Clear flag so stop interrupting constantly*/
-	PORT_HAL_ClearPinIntFlagCmd(PORTC_BASE,12);
+	PORT_HAL_ClearPinIntFlagCmd(PORTC_BASE, 12);
 
 	/*Set flag true that will activate the ADC transmission*/
 	flagGpio = true;
 
 }
 
-void gpioInit(void){
+void gpioInit(void) {
 	/*Initialize gpio ports*/
-    PINS_DRV_Init(NUM_OF_CONFIGURED_PINS,g_pin_mux_InitConfigArr);
-
+	PINS_DRV_Init(NUM_OF_CONFIGURED_PINS, g_pin_mux_InitConfigArr);
 
 	/*Set falling edge isr*/
-	PORT_HAL_SetPinIntSel(PORTC_BASE,12,PORT_INT_FALLING_EDGE);
+	PORT_HAL_SetPinIntSel(PORTC_BASE, 12, PORT_INT_FALLING_EDGE);
 
 	/*Create a enum with PORTC ISR*/
 	IRQn_Type gpio_irq_id = PORTC_IRQn;
 
-    /*Set ISR function*/
-    INT_SYS_InstallHandler(gpio_irq_id, &gpioISR12, (isr_t*) 0);
+	/*Set ISR function*/
+	INT_SYS_InstallHandler(gpio_irq_id, &gpioISR12, (isr_t*) 0);
 
-    /*Enable GPIO ISR*/
-    INT_SYS_EnableIRQ(gpio_irq_id);
+	/*Enable GPIO ISR*/
+	INT_SYS_EnableIRQ(gpio_irq_id);
 
 }
 
-
-
 /*-----------------------------------------------------------*/
 
-void vApplicationMallocFailedHook( void )
-{
+void vApplicationMallocFailedHook(void) {
 	/* Called if a call to pvPortMalloc() fails because there is insufficient
-	free memory available in the FreeRTOS heap.  pvPortMalloc() is called
-	internally by FreeRTOS API functions that create tasks, queues, software
-	timers, and semaphores.  The size of the FreeRTOS heap is set by the
-	configTOTAL_HEAP_SIZE configuration constant in FreeRTOSConfig.h. */
+	 free memory available in the FreeRTOS heap.  pvPortMalloc() is called
+	 internally by FreeRTOS API functions that create tasks, queues, software
+	 timers, and semaphores.  The size of the FreeRTOS heap is set by the
+	 configTOTAL_HEAP_SIZE configuration constant in FreeRTOSConfig.h. */
 	taskDISABLE_INTERRUPTS();
-	for( ;; );
+	for (;;)
+		;
 }
 /*-----------------------------------------------------------*/
 
-void vApplicationStackOverflowHook( TaskHandle_t pxTask, char *pcTaskName )
-{
-	( void ) pcTaskName;
-	( void ) pxTask;
+void vApplicationStackOverflowHook(TaskHandle_t pxTask, char *pcTaskName) {
+	(void) pcTaskName;
+	(void) pxTask;
 
 	/* Run time stack overflow checking is performed if
-	configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2.  This hook
-	function is called if a stack overflow is detected. */
+	 configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2.  This hook
+	 function is called if a stack overflow is detected. */
 	taskDISABLE_INTERRUPTS();
-	for( ;; );
+	for (;;)
+		;
 }
 /*-----------------------------------------------------------*/
 
-void vApplicationIdleHook( void )
-{
-    volatile size_t xFreeHeapSpace;
+void vApplicationIdleHook(void) {
+	volatile size_t xFreeHeapSpace;
 
 	/* This function is called on each cycle of the idle task.  In this case it
-	does nothing useful, other than report the amount of FreeRTOS heap that
-	remains unallocated. */
+	 does nothing useful, other than report the amount of FreeRTOS heap that
+	 remains unallocated. */
 	xFreeHeapSpace = xPortGetFreeHeapSize();
 
-	if( xFreeHeapSpace > 100 )
-	{
+	if (xFreeHeapSpace > 100) {
 		/* By now, the kernel has allocated everything it is going to, so
-		if there is a lot of heap remaining unallocated then
-		the value of configTOTAL_HEAP_SIZE in FreeRTOSConfig.h can be
-		reduced accordingly. */
+		 if there is a lot of heap remaining unallocated then
+		 the value of configTOTAL_HEAP_SIZE in FreeRTOSConfig.h can be
+		 reduced accordingly. */
 	}
 
 }
 /*-----------------------------------------------------------*/
 
 /* The Blinky build configuration does not include run time stats gathering,
-however, the Full and Blinky build configurations share a FreeRTOSConfig.h
-file.  Therefore, dummy run time stats functions need to be defined to keep the
-linker happy. */
-void vMainConfigureTimerForRunTimeStats( void ) {}
-unsigned long ulMainGetRunTimeCounterValue( void ) { return 0UL; }
+ however, the Full and Blinky build configurations share a FreeRTOSConfig.h
+ file.  Therefore, dummy run time stats functions need to be defined to keep the
+ linker happy. */
+void vMainConfigureTimerForRunTimeStats(void) {
+}
+unsigned long ulMainGetRunTimeCounterValue(void) {
+	return 0UL;
+}
 
 /* A tick hook is used by the "Full" build configuration.  The Full and blinky
-build configurations share a FreeRTOSConfig.h header file, so this simple build
-configuration also has to define a tick hook - even though it does not actually
-use it for anything. */
-void vApplicationTickHook( void ) {}
+ build configurations share a FreeRTOSConfig.h header file, so this simple build
+ configuration also has to define a tick hook - even though it does not actually
+ use it for anything. */
+void vApplicationTickHook(void) {
+}
 
 /*-----------------------------------------------------------*/
